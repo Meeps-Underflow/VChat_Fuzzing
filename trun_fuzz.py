@@ -1,62 +1,78 @@
 #!/usr/bin/env python3
-from boofuzz import *
 import socket
+import time
 import sys
 
-HOST = "10.0.2.15"
-PORT = 9999
+from boofuzz import (
+    Session,
+    Target,
+    TCPSocketConnection,
+    FuzzLoggerText,
+    FuzzLoggerCsv,
+    s_initialize,
+    s_string,
+    s_delim,
+    s_static,
+)
+from boofuzz.monitors.base_monitor import BaseMonitor
 
-# === Your monitor class exactly as you gave it ===
-class TcpPingMonitor(boofuzz.monitors.BaseMonitor):
-    def post_send(self, target=None, fuzz_data_logger=None, session=None):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+class TcpCrashOnlyMonitor(BaseMonitor):
+    def __init__(self, host, port, timeout=1.0, recheck_delay=0.2):
+        super().__init__()
+        self.host = host
+        self.port = int(port)
+        self.timeout = float(timeout)
+        self.recheck_delay = float(recheck_delay)
+
+    def _alive(self):
         try:
-            sock.connect((target._target_connection.host, target._target_connection.port))
-            return True
-        except socket.error as e:
-            fuzz_data_logger.log_fail(f"Opening TCP connection failed: {e}")
+            with socket.create_connection((self.host, self.port), timeout=self.timeout):
+                return True
+        except Exception:
             return False
-        finally:
-            sock.close()
 
-    def __repr__(self):
-        return "TCP Ping Monitor"
+    def post_send(self, target=None, fuzz_data_logger=None, session=None):
+        # Return True if alive, False if crashed
+        return self._alive()
 
-def receive_banner(sock):
-    try:
-        sock.recv(1024)
-    except Exception:
-        pass
+    def get_crash_synopsis(self):
+        return f"Service at {self.host}:{self.port} stopped accepting TCP connections."
+
 
 def main():
-    # loggers
+    host = "10.0.2.15"
+    port = 9999
+
     text_logger = FuzzLoggerText()
     file_logger = FuzzLoggerText(open("fuzz_log.txt", "w"))
     csv_logger = FuzzLoggerCsv(open("fuzz_log.csv", "w", newline=""))
 
-    # attach your monitor
-    tcp_monitor = TcpPingMonitor()
-    target = Target(connection=TCPSocketConnection(HOST, PORT),
-                    monitors=[tcp_monitor])
+    mon = TcpCrashOnlyMonitor(host=host, port=port, timeout=1.0)
 
-    # session
     session = Session(
-        sleep_time=1,
-        target=target,
-        reuse_target_connection=True,  # keep your original setting
-        fuzz_loggers=[text_logger, file_logger, csv_logger]
+        sleep_time=0.2,
+        target=Target(
+            connection=TCPSocketConnection(host, int(port)),
+            monitors=[mon],
+        ),
+        reuse_target_connection=True,
+        fuzz_loggers=[text_logger, file_logger, csv_logger],
+        # Stop on first crash: set thresholds to 1
+        crash_threshold_request=1,
+        crash_threshold_element=1,
+        receive_data_after_fuzz=False,  # optional; keep minimal
     )
 
-    # TRUN message
     s_initialize("TRUN")
-    s_string('TRUN', fuzzable=False, name='TRUN-Command')
-    s_delim(' ', fuzzable=False, name='TRUN-Space')
-    s_string('A', name='TRUN-STRING')
-    s_static('\r\n', name='TRUN-CRLF')
+    s_string("TRUN", fuzzable=False, name="TRUN-Command")
+    s_delim(" ", fuzzable=False, name="TRUN-Space")
+    s_string("A", name="TRUN-STRING")
+    s_static("\r\n", name="TRUN-CRLF")
 
-    session.pre_send = receive_banner
     session.connect(s_get("TRUN"))
     session.fuzz()
 
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    sys.exit(main())

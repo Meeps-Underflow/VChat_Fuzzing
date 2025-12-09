@@ -112,7 +112,7 @@ Represents one fuzzing session.
 
 # Ingestion Pipeline
 
-The ingestion script (`src/ingest.py`) performs:
+The ingestion script (`ingest2.py`) performs:
 
 ### ✔ Loading Boofuzz `.db` results (`cases` + `steps`)  
 ### ✔ Detecting crashes based on descriptions like:  
@@ -140,7 +140,7 @@ All into the same analysis database.
 # Running the Ingestion
 
 ```
-python src/ingest.py
+python ingest.py
 ```
 
 The script will:
@@ -155,42 +155,62 @@ The script will:
 
 # Example SQL Queries
 
-A full set of advanced queries is included in `src/queries.sql`.  
-Below are some examples for quick reference.
+Below are some examples
 
-### **Crashes by test case**
+### **Find all test cases that crashed**
 ```sql
-SELECT tc.case_name, COUNT(*) AS crash_count
+SELECT 
+    tc.case_id,
+    tc.case_number,
+    tc.case_name,
+    tc.run_id,
+    c.crash_reason,
+    c.timestamp AS crash_time
 FROM crashes c
 JOIN test_cases tc ON tc.case_id = c.case_id
-GROUP BY tc.case_name
-ORDER BY crash_count DESC;
-```
-
-### **Largest crash payloads**
-```sql
-SELECT crash_id, payload_size
-FROM crash_inputs
-ORDER BY payload_size DESC
-LIMIT 10;
-```
-
-### **Crash rate per fuzz run**
-```sql
-SELECT run_id,
-       total_crashes,
-       total_cases,
-       CAST(total_crashes AS FLOAT) / total_cases AS crash_rate
-FROM fuzz_runs;
+ORDER BY tc.case_number;
 ```
 
 ### **Test cases that never crashed**
 ```sql
-SELECT *
-FROM test_cases
-WHERE case_id NOT IN (SELECT case_id FROM crashes);
+SELECT 
+    fr.run_id,
+    fr.start_time,
+    fr.total_cases,
+    fr.total_crashes
+FROM fuzz_runs fr
+WHERE fr.total_crashes = 0
+ORDER BY fr.run_id;
+
 ```
 
+### **Show the payloads for all crashes**
+```sql
+SELECT 
+    c.crash_id,
+    tc.case_number,
+    tc.case_name,
+    ci.payload_size,
+    ci.payload
+FROM crash_inputs ci
+JOIN crashes c ON c.crash_id = ci.crash_id
+JOIN test_cases tc ON tc.case_id = c.case_id
+ORDER BY ci.payload_size DESC;
+```
+### **Show crash payloads for a specific command (e.g., TRUN, GTER)**
+```sql
+SELECT 
+    tc.case_name,
+    c.crash_reason,
+    ci.payload_size,
+    ci.payload
+FROM crash_inputs ci
+JOIN crashes c ON c.crash_id = ci.crash_id
+JOIN test_cases tc ON tc.case_id = c.case_id
+WHERE tc.case_name LIKE 'TRUN%'
+ORDER BY ci.payload_size DESC;
+
+```
 ---
 
 # License
